@@ -2,7 +2,6 @@ import {
   type AgentNamespace,
   routeAgentRequest,
   type Schedule,
-  type Agent,
 } from "agents";
 import { AIChatAgent } from "agents/ai-chat-agent";
 import {
@@ -166,8 +165,19 @@ export class Chat extends AIChatAgent<Env, ChatState> {
         return `Podcast page is now live at this URL: ${url} about ${topic}`;
       }
       
+      // generate message displaying podcast url
+      const messages = [
+        { role: "system", content: "You are a friendly assistant" },
+        {
+          role: "user",
+          content: `Return a message about the podcast that was just generated about ${topic} at ${url} and nothing else. `,
+        },
+      ];
+      
+      const responseMsg:any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages });
+      console.log(`response: ${responseMsg.response}`);
       // For other errors, continue without saving
-      return `Podcast page is now live at this URL: ${url} about ${topic}`;
+      return responseMsg.response;
     }
   }
 
@@ -204,7 +214,7 @@ export class Chat extends AIChatAgent<Env, ChatState> {
         `• ${p.topic} - ${p.url} (Generated: ${new Date(p.created_at).toLocaleString()})`
       ).join('\n');
 
-      return `Recent Podcasts (${podcasts.length}):\n\n${podcastList}`;
+      return ` ${limit} recent podcasts (${podcasts.length}):\n\n${podcastList}`;
     } catch (error) {
       console.error("Failed to retrieve podcasts:", error);
       console.error("Error details:", JSON.stringify(error, null, 2));
