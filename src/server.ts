@@ -221,6 +221,97 @@ export class Chat extends AIChatAgent<Env, ChatState> {
       return `Failed to retrieve podcast list from database. Error: ${error}`;
     }
   }
+
+  async recommendPodcast(mood: string) {
+    console.log(`Looking for podcast recommendations based on mood: ${mood}`);
+    
+    try {
+      // First, let's try to list tables to verify connection
+      const tablesResult = await this.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table';").all();
+      console.log(`Available tables:`, tablesResult);
+      
+      // Get all podcasts from the database
+      const stmt = this.env.DB.prepare(`
+        SELECT topic, slug, url, created_at 
+        FROM podcasts 
+        ORDER BY created_at DESC
+      `);
+      
+      const result = await stmt.all();
+      const podcasts = result.results || [];
+      
+      if (podcasts.length === 0) {
+        return "No podcasts have been generated yet. Generate some podcasts first to get recommendations!";
+      }
+
+      // Format podcasts list for AI analysis
+      const podcastList = podcasts.map((p: any, index: number) => 
+        `${index + 1}. Topic: "${p.topic}" | URL: ${p.url} | Created: ${new Date(p.created_at).toLocaleString()}`
+      ).join('\n');
+
+      // Use AI to analyze and recommend based on mood
+      const messages = [
+        {
+          role: "system", 
+          content: "You are a helpful podcast recommendation assistant. Based on a user's mood or category preference and a list of available podcasts, recommend the best matching podcast(s). Be enthusiastic and explain why your recommendation fits their mood. Include the full URL in your response."
+        },
+        {
+          role: "user", 
+          content: `User mood/preference: "${mood}"\n\nAvailable podcasts:\n${podcastList}\n\nPlease recommend the best podcast(s) that match my mood and explain why.`
+        }
+      ];
+
+      const aiResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages });
+      console.log(`AI recommendation response: ${aiResponse.response}`);
+      
+      if (aiResponse.response) {
+        // Generate a personal message using AI
+        const personalMessages = [
+          { role: "system", content: "You are an enthusiastic podcast curator who creates personalized, friendly messages." },
+          {
+            role: "user",
+            content: `Create a warm, personal message for someone looking for a podcast when they're feeling "${mood}". Based on this recommendation: ${aiResponse.response}. Make it sound like you personally chose this for them and care about their mood. Include some emojis and be encouraging.`
+          },
+        ];
+        
+        const personalResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages: personalMessages });
+        console.log(`AI personal message response: ${personalResponse.response}`);
+        
+        return personalResponse.response || `🎧 Podcast Recommendation:\n\n${aiResponse.response}`;
+      } else {
+        // Fallback to simple keyword matching if AI fails
+        const keywords = mood.toLowerCase().split(' ');
+        const matches = podcasts.filter((podcast: any) => 
+          keywords.some(keyword => podcast.topic.toLowerCase().includes(keyword))
+        );
+        
+        if (matches.length > 0) {
+          const match = matches[0];
+          const date = new Date(match.created_at as string).toLocaleString();
+          
+          // Generate personal message for fallback too
+          const fallbackMessages = [
+            { role: "system", content: "You are an enthusiastic podcast curator who creates personalized, friendly messages." },
+            {
+              role: "user",
+              content: `Create a warm, personal message recommending the podcast "${match.topic}" at ${match.url} for someone feeling "${mood}". Make it encouraging and personal with emojis.`
+            },
+          ];
+          
+          const fallbackResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages: fallbackMessages });
+          console.log(`AI fallback message response: ${fallbackResponse.response}`);
+          
+          return fallbackResponse.response || `🎯 Found a matching podcast!\n\n"${match.topic}"\n📅 Generated: ${date}\n🔗 Listen here: ${match.url}\n\nThis podcast matches your mood for: ${mood}`;
+        } else {
+          return `😔 No podcasts found matching "${mood}". Try generating some podcasts with topics you're interested in first!`;
+        }
+      }
+    } catch (error) {
+      console.error("Failed to get podcast recommendations:", error);
+      console.error("Error details:", JSON.stringify(error, null, 2));
+      return `Failed to get recommendations. Error: ${error}`;
+    }
+  }
 }
 
 /**
