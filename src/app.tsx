@@ -1,28 +1,15 @@
-import { useEffect, useState, useRef, useCallback, use } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "agents/ai-react";
 import type { Message } from "@ai-sdk/react";
+import { APPROVAL } from "./shared";
 import type { tools } from "./tools";
-
-// Component imports
-import { Button } from "@/components/button/Button";
-import { Card } from "@/components/card/Card";
-import { Avatar } from "@/components/avatar/Avatar";
-import { Toggle } from "@/components/toggle/Toggle";
-import { Textarea } from "@/components/textarea/Textarea";
-import { MemoizedMarkdown } from "@/components/memoized-markdown";
-import { ToolInvocationCard } from "@/components/tool-invocation-card/ToolInvocationCard";
-
-// Icon imports
-import {
-  Bug,
-  Moon,
-  Robot,
-  Sun,
-  Trash,
-  PaperPlaneTilt,
-  Stop,
-} from "@phosphor-icons/react";
+import { Button } from "./components/ui/button";
+import { Card } from "./components/ui/card";
+import { Input } from "./components/ui/input";
+import { Avatar, AvatarFallback } from "./components/ui/avatar";
+import { Switch } from "./components/ui/switch";
+import { Send, Bot, Trash2, Sun, Moon, Bug } from "lucide-react";
 
 // List of tools that require human confirmation
 const toolsRequiringConfirmation: (keyof typeof tools)[] = [
@@ -36,7 +23,6 @@ export default function Chat() {
     return (savedTheme as "dark" | "light") || "dark";
   });
   const [showDebug, setShowDebug] = useState(false);
-  const [textareaHeight, setTextareaHeight] = useState("auto");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = useCallback(() => {
@@ -69,6 +55,9 @@ export default function Chat() {
 
   const agent = useAgent({
     agent: "chat",
+    onStateUpdate(state:any, source:any) {
+      console.log(state);
+    },
   });
 
   const {
@@ -78,8 +67,6 @@ export default function Chat() {
     handleSubmit: handleAgentSubmit,
     addToolResult,
     clearHistory,
-    isLoading,
-    stop,
   } = useAgentChat({
     agent,
     maxSteps: 5,
@@ -106,10 +93,9 @@ export default function Chat() {
   };
 
   return (
-    <div className="h-[100vh] w-full p-4 flex justify-center items-center bg-fixed overflow-hidden">
-      <HasOpenAIKey />
-      <div className="h-[calc(100vh-2rem)] w-full mx-auto max-w-lg flex flex-col shadow-xl rounded-md overflow-hidden relative border border-neutral-300 dark:border-neutral-800">
-        <div className="px-4 py-3 border-b border-neutral-300 dark:border-neutral-800 flex items-center gap-3 sticky top-0 z-10">
+    <div className="h-[100vh] w-full bg-gradient-to-br from-[#F48120]/10 via-background/30 to-[#FAAD3F]/10 backdrop-blur-md p-4 flex justify-center items-center bg-fixed overflow-hidden">
+      <div className="bg-background h-[calc(100vh-2rem)] w-full mx-auto max-w-lg flex flex-col shadow-xl rounded-md overflow-hidden relative border border-assistant-border/20">
+        <div className="px-4 py-3 border-b border-border flex items-center gap-3 bg-background sticky top-0 z-10">
           <div className="flex items-center justify-center h-8 w-8">
             <svg
               width="28px"
@@ -129,36 +115,39 @@ export default function Chat() {
           </div>
 
           <div className="flex-1">
-            <h2 className="font-semibold text-base">AI Chat Agent</h2>
+            <h2 className="font-semibold text-base">Podcast Chat Agent</h2>
           </div>
 
           <div className="flex items-center gap-2 mr-2">
-            <Bug size={16} />
-            <Toggle
-              toggled={showDebug}
+            <Bug className="h-4 w-4 text-muted-foreground/50 dark:text-gray-500" />
+            <Switch
+              checked={showDebug}
+              onCheckedChange={setShowDebug}
               aria-label="Toggle debug mode"
-              onClick={() => setShowDebug((prev) => !prev)}
+              className="data-[state=checked]:bg-gray-500 data-[state=unchecked]:bg-gray-300 dark:data-[state=unchecked]:bg-gray-700"
             />
           </div>
 
           <Button
             variant="ghost"
-            size="md"
-            shape="square"
+            size="icon"
             className="rounded-full h-9 w-9"
             onClick={toggleTheme}
           >
-            {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+            {theme === "dark" ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <Moon className="h-5 w-5" />
+            )}
           </Button>
 
           <Button
             variant="ghost"
-            size="md"
-            shape="square"
+            size="icon"
             className="rounded-full h-9 w-9"
             onClick={clearHistory}
           >
-            <Trash size={20} />
+            <Trash2 className="h-5 w-5" />
           </Button>
         </div>
 
@@ -166,12 +155,12 @@ export default function Chat() {
         <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24 max-h-[calc(100vh-10rem)]">
           {agentMessages.length === 0 && (
             <div className="h-full flex items-center justify-center">
-              <Card className="p-6 max-w-md mx-auto bg-neutral-100 dark:bg-neutral-900">
+              <Card className="bg-secondary/30 border-secondary/50 p-6 max-w-md mx-auto">
                 <div className="text-center space-y-4">
                   <div className="bg-[#F48120]/10 text-[#F48120] rounded-full p-3 inline-flex">
-                    <Robot size={24} />
+                    <Bot className="h-6 w-6" />
                   </div>
-                  <h3 className="font-semibold text-lg">Welcome to AI Chat</h3>
+                  <h3 className="font-semibold text-lg">Welcome to Podcast AI Chat</h3>
                   <p className="text-muted-foreground text-sm">
                     Start a conversation with your AI assistant. Try asking
                     about:
@@ -191,10 +180,11 @@ export default function Chat() {
             </div>
           )}
 
-          {agentMessages.map((m: Message, index) => {
+          {agentMessages.map((m: Message, index:any) => {
             const isUser = m.role === "user";
             const showAvatar =
               index === 0 || agentMessages[index - 1]?.role !== m.role;
+            const showRole = showAvatar && !isUser;
 
             return (
               <div key={m.id}>
@@ -212,7 +202,11 @@ export default function Chat() {
                     }`}
                   >
                     {showAvatar && !isUser ? (
-                      <Avatar username={"AI"} />
+                      <Avatar className="h-8 w-8 mt-1 flex-shrink-0">
+                        <AvatarFallback className="bg-[#F48120] text-white">
+                          AI
+                        </AvatarFallback>
+                      </Avatar>
                     ) : (
                       !isUser && <div className="w-8" />
                     )}
@@ -222,12 +216,12 @@ export default function Chat() {
                         {m.parts?.map((part, i) => {
                           if (part.type === "text") {
                             return (
-                              // biome-ignore lint/suspicious/noArrayIndexKey: immutable index
+                              // biome-ignore lint/suspicious/noArrayIndexKey: it's fine here
                               <div key={i}>
                                 <Card
-                                  className={`p-3 rounded-md bg-neutral-100 dark:bg-neutral-900 ${
+                                  className={`p-3 rounded-md ${
                                     isUser
-                                      ? "rounded-br-none"
+                                      ? "bg-primary text-primary-foreground rounded-br-none"
                                       : "rounded-bl-none border-assistant-border"
                                   } ${
                                     part.text.startsWith("scheduled message")
@@ -242,13 +236,12 @@ export default function Chat() {
                                       🕒
                                     </span>
                                   )}
-                                  <MemoizedMarkdown
-                                    id={`${m.id}-${i}`}
-                                    content={part.text.replace(
+                                  <p className="text-sm whitespace-pre-wrap">
+                                    {part.text.replace(
                                       /^scheduled message: /,
                                       ""
                                     )}
-                                  />
+                                  </p>
                                 </Card>
                                 <p
                                   className={`text-xs text-muted-foreground mt-1 ${
@@ -266,26 +259,82 @@ export default function Chat() {
                           if (part.type === "tool-invocation") {
                             const toolInvocation = part.toolInvocation;
                             const toolCallId = toolInvocation.toolCallId;
-                            const needsConfirmation =
+
+                            if (
                               toolsRequiringConfirmation.includes(
                                 toolInvocation.toolName as keyof typeof tools
+                              ) &&
+                              toolInvocation.state === "call"
+                            ) {
+                              return (
+                                <Card
+                                  // biome-ignore lint/suspicious/noArrayIndexKey: it's fine here
+                                  key={i}
+                                  className="p-4 my-3 bg-secondary/30 border-secondary/50 rounded-md"
+                                >
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <div className="bg-[#F48120]/10 p-1.5 rounded-full">
+                                      <Bot className="h-4 w-4 text-[#F48120]" />
+                                    </div>
+                                    <h4 className="font-medium">
+                                      {toolInvocation.toolName}
+                                    </h4>
+                                  </div>
+
+                                  <div className="mb-3">
+                                    <h5 className="text-xs font-medium mb-1 text-muted-foreground">
+                                      Arguments:
+                                    </h5>
+                                    <pre className="bg-background/80 p-2 rounded-md text-xs overflow-auto">
+                                      {JSON.stringify(
+                                        toolInvocation.args,
+                                        null,
+                                        2
+                                      )}
+                                    </pre>
+                                  </div>
+
+                                  <div className="flex gap-2 justify-end">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        addToolResult({
+                                          toolCallId,
+                                          result: APPROVAL.NO,
+                                        })
+                                      }
+                                    >
+                                      Reject
+                                    </Button>
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      onClick={() =>
+                                        addToolResult({
+                                          toolCallId,
+                                          result: APPROVAL.YES,
+                                        })
+                                      }
+                                    >
+                                      Approve
+                                    </Button>
+                                  </div>
+                                </Card>
                               );
-
-                            // Skip rendering the card in debug mode
-                            if (showDebug) return null;
-
-                            return (
-                              <ToolInvocationCard
-                                // biome-ignore lint/suspicious/noArrayIndexKey: using index is safe here as the array is static
-                                key={`${toolCallId}-${i}`}
-                                toolInvocation={toolInvocation}
-                                toolCallId={toolCallId}
-                                needsConfirmation={needsConfirmation}
-                                addToolResult={addToolResult}
-                              />
-                            );
+                            }
+                            return null;
                           }
                           return null;
+                          // return (
+                          //   <div key={i}>
+                          //     <Card className="p-3 rounded-2xl bg-secondary border-secondary">
+                          //       <pre className="text-xs">
+                          //         {JSON.stringify(part, null, 2)}
+                          //       </pre>
+                          //     </Card>
+                          //   </div>
+                          // );
                         })}
                       </div>
                     </div>
@@ -299,150 +348,49 @@ export default function Chat() {
 
         {/* Input Area */}
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(e) =>
             handleAgentSubmit(e, {
               data: {
                 annotations: {
                   hello: "world",
                 },
               },
-            });
-            setTextareaHeight("auto"); // Reset height after submission
-          }}
-          className="p-3 bg-neutral-50 absolute bottom-0 left-0 right-0 z-10 border-t border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900"
+            })
+          }
+          className="p-3 bg-input-background absolute bottom-0 left-0 right-0 z-10 border-t border-assistant-border/30"
         >
           <div className="flex items-center gap-2">
             <div className="flex-1 relative">
-              <Textarea
+              <Input
                 disabled={pendingToolCallConfirmation}
                 placeholder={
                   pendingToolCallConfirmation
                     ? "Please respond to the tool confirmation above..."
-                    : "Send a message..."
+                    : "Type your message..."
                 }
-                className="flex w-full border border-neutral-200 dark:border-neutral-700 px-3 py-2 text-base ring-offset-background placeholder:text-neutral-500 dark:placeholder:text-neutral-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 dark:focus-visible:ring-neutral-700 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm min-h-[24px] max-h-[calc(75dvh)] overflow-hidden resize-none rounded-2xl !text-base pb-10 dark:bg-neutral-900"
+                className="pr-10 py-6 rounded-full bg-muted border-muted"
                 value={agentInput}
-                onChange={(e) => {
-                  handleAgentInputChange(e);
-                  // Auto-resize the textarea
-                  e.target.style.height = "auto";
-                  e.target.style.height = `${e.target.scrollHeight}px`;
-                  setTextareaHeight(`${e.target.scrollHeight}px`);
-                }}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
+                onChange={handleAgentInputChange}
+                onKeyDown={(e:any) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleAgentSubmit(e as unknown as React.FormEvent);
-                    setTextareaHeight("auto"); // Reset height on Enter submission
                   }
                 }}
-                rows={2}
-                style={{ height: textareaHeight }}
               />
-              <div className="absolute bottom-0 right-0 p-2 w-fit flex flex-row justify-end">
-                {isLoading ? (
-                  <button
-                    type="button"
-                    onClick={stop}
-                    className="inline-flex items-center cursor-pointer justify-center gap-2 whitespace-nowrap text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 rounded-full p-1.5 h-fit border border-neutral-200 dark:border-neutral-800"
-                    aria-label="Stop generation"
-                  >
-                    <Stop size={16} />
-                  </button>
-                ) : (
-                  <button
-                    type="submit"
-                    className="inline-flex items-center cursor-pointer justify-center gap-2 whitespace-nowrap text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 rounded-full p-1.5 h-fit border border-neutral-200 dark:border-neutral-800"
-                    disabled={pendingToolCallConfirmation || !agentInput.trim()}
-                    aria-label="Send message"
-                  >
-                    <PaperPlaneTilt size={16} />
-                  </button>
-                )}
-              </div>
             </div>
+
+            <Button
+              type="submit"
+              size="icon"
+              className="rounded-full h-10 w-10 flex-shrink-0"
+              disabled={pendingToolCallConfirmation || !agentInput.trim()}
+            >
+              <Send className="h-5 w-5" />
+            </Button>
           </div>
         </form>
       </div>
     </div>
   );
-}
-
-const hasOpenAiKeyPromise = fetch("/check-open-ai-key").then((res) =>
-  res.json<{ success: boolean }>()
-);
-
-function HasOpenAIKey() {
-  const hasOpenAiKey = use(hasOpenAiKeyPromise);
-
-  if (!hasOpenAiKey.success) {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-red-500/10 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto p-4">
-          <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-lg border border-red-200 dark:border-red-900 p-4">
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
-                <svg
-                  className="w-5 h-5 text-red-600 dark:text-red-400"
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-labelledby="warningIcon"
-                >
-                  <title id="warningIcon">Warning Icon</title>
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
-                  OpenAI API Key Not Configured
-                </h3>
-                <p className="text-neutral-600 dark:text-neutral-300 mb-1">
-                  Requests to the API, including from the frontend UI, will not
-                  work until an OpenAI API key is configured.
-                </p>
-                <p className="text-neutral-600 dark:text-neutral-300">
-                  Please configure an OpenAI API key by setting a{" "}
-                  <a
-                    href="https://developers.cloudflare.com/workers/configuration/secrets/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-red-600 dark:text-red-400"
-                  >
-                    secret
-                  </a>{" "}
-                  named{" "}
-                  <code className="bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 rounded text-red-600 dark:text-red-400 font-mono text-sm">
-                    OPENAI_API_KEY
-                  </code>
-                  . <br />
-                  You can also use a different model provider by following these{" "}
-                  <a
-                    href="https://github.com/cloudflare/agents-starter?tab=readme-ov-file#use-a-different-ai-model-provider"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-red-600 dark:text-red-400"
-                  >
-                    instructions.
-                  </a>
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  return null;
 }

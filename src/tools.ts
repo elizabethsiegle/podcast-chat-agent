@@ -5,9 +5,8 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import type { Chat } from "./server";
-import { getCurrentAgent } from "agents";
-import { unstable_scheduleSchema } from "agents/schedule";
+
+import { agentContext } from "./server";
 
 /**
  * Weather information tool that requires human confirmation
@@ -35,77 +34,64 @@ const getLocalTime = tool({
 });
 
 const scheduleTask = tool({
-  description: "A tool to schedule a task to be executed at a later time",
-  parameters: unstable_scheduleSchema,
-  execute: async ({ when, description }) => {
+  description:
+    "schedule a task to be executed at a later time. 'when' can be a date, a delay in seconds, or a cron pattern.",
+  parameters: z.object({
+    type: z.enum(["scheduled", "delayed", "cron"]),
+    when: z.union([z.number(), z.string()]),
+    payload: z.string(),
+  }),
+  execute: async ({ type, when, payload }) => {
     // we can now read the agent context from the ALS store
-    const { agent } = getCurrentAgent<Chat>();
-
-    function throwError(msg: string): string {
-      throw new Error(msg);
+    const agent = agentContext.getStore();
+    if (!agent) {
+      throw new Error("No agent found");
     }
-    if (when.type === "no-schedule") {
-      return "Not a valid schedule input";
-    }
-    const input =
-      when.type === "scheduled"
-        ? when.date // scheduled
-        : when.type === "delayed"
-          ? when.delayInSeconds // delayed
-          : when.type === "cron"
-            ? when.cron // cron
-            : throwError("not a valid schedule input");
     try {
-      agent!.schedule(input!, "executeTask", description);
+      agent.schedule(
+        type === "scheduled"
+          ? new Date(when) // scheduled
+          : type === "delayed"
+            ? when // delayed
+            : when, // cron
+        "executeTask",
+        payload
+      );
     } catch (error) {
       console.error("error scheduling task", error);
       return `Error scheduling task: ${error}`;
     }
-    return `Task scheduled for type "${when.type}" : ${input}`;
+    return `Task scheduled for ${when}`;
   },
 });
 
-/**
- * Tool to list all scheduled tasks
- * This executes automatically without requiring human confirmation
- */
-const getScheduledTasks = tool({
-  description: "List all tasks that have been scheduled",
-  parameters: z.object({}),
-  execute: async () => {
-    const { agent } = getCurrentAgent<Chat>();
-
-    try {
-      const tasks = agent!.getSchedules();
-      if (!tasks || tasks.length === 0) {
-        return "No scheduled tasks found.";
-      }
-      return tasks;
-    } catch (error) {
-      console.error("Error listing scheduled tasks", error);
-      return `Error listing scheduled tasks: ${error}`;
-    }
-  },
-});
 
 /**
- * Tool to cancel a scheduled task by its ID
- * This executes automatically without requiring human confirmation
+ * Tool for generating a podcast
  */
-const cancelScheduledTask = tool({
-  description: "Cancel a scheduled task using its ID",
+const generatePodcast = tool({
+  description: "Generate a podcast about a given topic",
   parameters: z.object({
-    taskId: z.string().describe("The ID of the task to cancel"),
+    topic: z.string().describe("A topic to generate a podcast about"),
   }),
-  execute: async ({ taskId }) => {
-    const { agent } = getCurrentAgent<Chat>();
-    try {
-      await agent!.cancelSchedule(taskId);
-      return `Task ${taskId} has been successfully canceled.`;
-    } catch (error) {
-      console.error("Error canceling scheduled task", error);
-      return `Error canceling task ${taskId}: ${error}`;
-    }
+  execute: async ({ topic }) => {
+    const agent = agentContext.getStore();
+    console.log("agent", agent);
+    return await agent!.generatePodcast(topic);
+  },
+});
+
+/**
+ * Tool for listing recent podcasts
+ */
+const listRecentPodcasts = tool({
+  description: "List recent podcasts that have been generated",
+  parameters: z.object({
+    limit: z.number().optional().describe("Number of recent podcasts to retrieve (default: 10)"),
+  }),
+  execute: async ({ limit = 10 }) => {
+    const agent = agentContext.getStore();
+    return await agent!.listRecentPodcasts(limit);
   },
 });
 
@@ -117,8 +103,8 @@ export const tools = {
   getWeatherInformation,
   getLocalTime,
   scheduleTask,
-  getScheduledTasks,
-  cancelScheduledTask,
+  generatePodcast,
+  listRecentPodcasts,
 };
 
 /**
