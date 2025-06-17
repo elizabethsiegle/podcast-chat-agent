@@ -4,14 +4,10 @@
  */
 import { tool } from "ai";
 import { z } from "zod";
-
-
 import { agentContext } from "./server";
 
 /**
  * Weather information tool that requires human confirmation
- * When invoked, this will present a confirmation dialog to the user
- * The actual implementation is in the executions object below
  */
 const getWeatherInformation = tool({
   description: "show the weather in a given city to the user",
@@ -21,8 +17,6 @@ const getWeatherInformation = tool({
 
 /**
  * Local time tool that executes automatically
- * Since it includes an execute function, it will run without user confirmation
- * This is suitable for low-risk operations that don't need oversight
  */
 const getLocalTime = tool({
   description: "get the local time for a specified location",
@@ -42,7 +36,6 @@ const scheduleTask = tool({
     payload: z.string(),
   }),
   execute: async ({ type, when, payload }) => {
-    // we can now read the agent context from the ALS store
     const agent = agentContext.getStore();
     if (!agent) {
       throw new Error("No agent found");
@@ -50,10 +43,10 @@ const scheduleTask = tool({
     try {
       agent.schedule(
         type === "scheduled"
-          ? new Date(when) // scheduled
+          ? new Date(when)
           : type === "delayed"
-            ? when // delayed
-            : when, // cron
+            ? when
+            : when,
         "executeTask",
         payload
       );
@@ -65,12 +58,11 @@ const scheduleTask = tool({
   },
 });
 
-
 /**
- * Tool for generating a podcast
+ * Tool for generating a basic podcast (rickroll version)
  */
 const generatePodcast = tool({
-  description: "Generate a podcast about a given topic",
+  description: "Generate a basic podcast page about a given topic (rickroll version)",
   parameters: z.object({
     topic: z.string().describe("A topic to generate a podcast about"),
   }),
@@ -78,6 +70,22 @@ const generatePodcast = tool({
     const agent = agentContext.getStore();
     console.log("agent", agent);
     return await agent!.generatePodcast(topic);
+  },
+});
+
+/**
+ * Tool for creating an audio podcast with MP3 generation
+ */
+const createAudioPodcast = tool({
+  description: "Create a complete audio podcast with MP3 file generation and script for a given topic",
+  parameters: z.object({
+    topic: z.string().describe("A topic to create an audio podcast about"),
+    accessibilityMode: z.string().optional().describe("Set to 'accessible' for longer transcript, otherwise 'standard' for shorter format"),
+  }),
+  execute: async ({ topic, accessibilityMode = "standard" }) => {
+    const agent = agentContext.getStore();
+    console.log("Creating audio podcast for:", topic);
+    return await agent!.createAudioPodcast(topic, accessibilityMode);
   },
 });
 
@@ -96,21 +104,34 @@ const listRecentPodcasts = tool({
 });
 
 /**
+ * Tool for getting podcast recommendations based on mood
+ */
+const recommendPodcast = tool({
+  description: "Get podcast recommendations based on user's mood or preferences",
+  parameters: z.object({
+    mood: z.string().describe("The user's current mood or content preference (e.g., 'relaxed', 'energetic', 'educational', 'funny')"),
+  }),
+  execute: async ({ mood }) => {
+    const agent = agentContext.getStore();
+    return await agent!.recommendPodcast(mood);
+  },
+});
+
+/**
  * Export all available tools
- * These will be provided to the AI model to describe available capabilities
  */
 export const tools = {
   getWeatherInformation,
   getLocalTime,
   scheduleTask,
   generatePodcast,
+  createAudioPodcast,
   listRecentPodcasts,
+  recommendPodcast,
 };
 
 /**
  * Implementation of confirmation-required tools
- * This object contains the actual logic for tools that need human approval
- * Each function here corresponds to a tool above that doesn't have an execute function
  */
 export const executions = {
   getWeatherInformation: async ({ city }: { city: string }) => {

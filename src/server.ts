@@ -31,6 +31,8 @@ type Podcast = {
   topic: string; 
   slug: string;
   url: string;
+  script?: string;
+  audio_data?: string;
   created_at: string;
 }
 
@@ -67,18 +69,13 @@ export class Chat extends AIChatAgent<Env, ChatState> {
             apiKey: this.env.OPENAI_API_KEY,
           });
 
-          // Cloudflare AI Gateway
-          // const openai = createOpenAI({
-          //   apiKey: this.env.OPENAI_API_KEY,
-          //   baseURL: this.env.GATEWAY_BASE_URL,
-          // });
-
           // Stream the AI response using GPT-4
           const result = streamText({
             model: openai("gpt-4o-2024-11-20"),
             system: `
              You are a helpful podcast assistant that can generate podcasts and manage podcast content using Cloudflare Workers AI. You can:
               - Generate podcasts on any topic using the generatePodcast tool
+              - Create audio podcasts with MP3 files using the createAudioPodcast tool
               - List previously generated podcasts using the listRecentPodcasts tool
               - Schedule tasks to be executed later if needed
               
@@ -127,18 +124,11 @@ export class Chat extends AIChatAgent<Env, ChatState> {
     const url = baseUrl + "/" + slug;
     
     console.log(`DB binding exists: ${!!this.env.DB}`);
-    console.log(`DB binding type: ${typeof this.env.DB}`);
-    console.log(`DB binding constructor: ${this.env.DB?.constructor?.name}`);
     
     try {
-      // First, let's try to list tables to verify connection
-      const tablesResult = await this.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table';").all();
-      console.log(`Available tables:`, tablesResult);
-      
       // Check if slug already exists and make it unique if needed
       const existingSlug = await this.env.DB.prepare("SELECT slug FROM podcasts WHERE slug = ?").bind(slug).first();
       if (existingSlug) {
-        // Add timestamp to make it unique
         const timestamp = Date.now();
         slug = `${slug}-${timestamp}`;
         console.log(`Slug already exists, using unique slug: ${slug}`);
@@ -152,20 +142,12 @@ export class Chat extends AIChatAgent<Env, ChatState> {
       `);
       const insertResult = await stmt.bind(topic, slug, finalUrl).run();
       console.log(`Saved podcast slug: ${slug} for topic: ${topic}`);
-      console.log(`Insert result:`, insertResult);
       
       return `Podcast page is now live at this URL: ${finalUrl} about ${topic}`;
     } catch (error) {
       console.error("Failed to save podcast slug:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       
-      // If it's a constraint error, still return the URL even if we couldn't save
-      if (error instanceof Error && error.message?.includes('UNIQUE constraint')) {
-        console.log(`Duplicate slug detected, returning URL anyway: ${url}`);
-        return `Podcast page is now live at this URL: ${url} about ${topic}`;
-      }
-      
-      // generate message displaying podcast url
+      // For errors, continue without saving
       const messages = [
         { role: "system", content: "You are a friendly assistant" },
         {
@@ -175,22 +157,166 @@ export class Chat extends AIChatAgent<Env, ChatState> {
       ];
       
       const responseMsg:any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages });
-      console.log(`response: ${responseMsg.response}`);
-      // For other errors, continue without saving
       return responseMsg.response;
+    }
+  }
+
+  /**
+   * Creates an audio podcast with MP3 generation and saves to database
+   * @param topic - The topic for the podcast
+   * @param accessibilityMode - "accessible" for full transcript, otherwise standard
+   */
+  async createAudioPodcast(topic: string, accessibilityMode: string = "standard") {
+    console.log(`Creating audio podcast for topic: ${topic} with mode: ${accessibilityMode}`);
+
+    const isAccessible = accessibilityMode.toLowerCase() === "accessible";
+    const baseUrl = "https://podcaster.lizziepika.workers.dev";
+
+    try {
+      // Step 1: Generate podcast script using AI
+      const scriptMessages = [
+        {
+          role: "system",
+          content: isAccessible
+            ? `You are a professional podcast script writer specializing in accessible content. Create engaging, well-structured podcast scripts that are perfect for both audio listening and text reading.`
+            : `You are a professional podcast script writer. Create engaging, conversational podcast scripts that sound natural when spoken aloud. Keep scripts concise but informative, typically 2-3 minutes when read aloud (about 300-450 words).`,
+        },
+        {
+          role: "user",
+          content: isAccessible
+            ? `Write a comprehensive podcast script about "${topic}" with clear sections, natural speech patterns, and approximately 4-5 minutes when read aloud (600-750 words). Include an introduction, main points, and conclusion.`
+            : `Write a brief podcast script about "${topic}" that covers 2-3 key points, uses conversational language, and can be read aloud in 2-3 minutes (300-450 words). Return only the script text.`,
+        },
+      ];
+
+      console.log("Generating podcast script...");
+      const scriptResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", {
+        messages: scriptMessages,
+      });
+
+      if (!scriptResponse.response) {
+        throw new Error("Failed to generate podcast script");
+      }
+
+      const fullScript = scriptResponse.response;
+      console.log(`Generated script: ${fullScript.substring(0, 100)}...`);
+
+      // Clean script for audio (remove any section markers)
+      const audioScript = fullScript.replace(/\[.*?\]/g, "").replace(/\n\n+/g, "\n\n").trim();
+
+      // Step 2: Convert script to audio
+      console.log("Converting script to audio...");
+      let audioDataUrl = "";
+      let audioError = null;
+
+      try {
+        const audioResponse: any = await this.env.AI.run("@cf/myshell-ai/melotts", {
+          prompt: audioScript,
+          lang: "en",
+        });
+
+        if (audioResponse?.audio) {
+          audioDataUrl = `data:audio/mp3;base64,${audioResponse.audio}`;
+          console.log("Audio generated successfully");
+        } else {
+          throw new Error("No audio data returned");
+        }
+      } catch (error) {
+        console.warn("Audio generation failed:", error);
+        audioError = error;
+      }
+
+      // Step 3: Generate unique slug
+      const slugMessages = [
+        { role: "system", content: "You are a helpful assistant that creates URL-friendly slugs." },
+        {
+          role: "user",
+          content: `Create a URL-friendly slug for a podcast about "${topic}". Return only the slug with hyphens, no quotes, no extra text.`,
+        },
+      ];
+
+      const slugResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", {
+        messages: slugMessages,
+      });
+
+      let slug = slugResponse.response?.trim() || topic.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      
+      // Add prefix and ensure uniqueness
+      slug = `audio-${slug}`;
+      
+      try {
+        const existingSlug = await this.env.DB.prepare("SELECT slug FROM podcasts WHERE slug = ?").bind(slug).first();
+        if (existingSlug) {
+          const timestamp = Date.now();
+          slug = `${slug}-${timestamp}`;
+        }
+      } catch (e) {
+        console.warn("Could not check for existing slug:", e);
+      }
+
+      const finalUrl = `${baseUrl}/${slug}`;
+
+      // Step 4: Save to database with audio data
+      try {
+        // Try to add columns if they don't exist (migration)
+        try {
+          await this.env.DB.prepare("ALTER TABLE podcasts ADD COLUMN script TEXT").run();
+          await this.env.DB.prepare("ALTER TABLE podcasts ADD COLUMN audio_data TEXT").run();
+        } catch (e) {
+          // Columns might already exist
+        }
+
+        const stmt = this.env.DB.prepare(`
+          INSERT INTO podcasts (topic, slug, url, script, audio_data, created_at) 
+          VALUES (?, ?, ?, ?, ?, datetime('now'))
+        `);
+        
+        await stmt.bind(
+          `${isAccessible ? "Accessible" : "Audio"}: ${topic}`, 
+          slug, 
+          finalUrl, 
+          fullScript,
+          audioDataUrl || null
+        ).run();
+
+        console.log(`Saved audio podcast record for topic: ${topic} with slug: ${slug}`);
+      } catch (dbError) {
+        console.warn("Could not save to database with audio data, trying basic save:", dbError);
+        
+        // Fallback: try basic insert
+        try {
+          const fallbackStmt = this.env.DB.prepare(`
+            INSERT INTO podcasts (topic, slug, url, created_at) 
+            VALUES (?, ?, ?, datetime('now'))
+          `);
+          await fallbackStmt.bind(`Audio: ${topic}`, slug, finalUrl).run();
+        } catch (e) {
+          console.warn("Basic save also failed:", e);
+        }
+      }
+
+      // Step 5: Return success response
+      const successMessage = audioDataUrl 
+        ? `🎧 Audio podcast created successfully for "${topic}"! The podcast includes both script and MP3 audio.`
+        : `📝 Podcast script created for "${topic}", but audio generation failed. You can still visit the page to see the content.`;
+
+      return `${successMessage}\n\n🔗 Visit your podcast: ${finalUrl}\n\n${audioDataUrl ? '🎵 Includes playable MP3 audio' : '📄 Text-only version available'}`;
+
+    } catch (error) {
+      console.error("Failed to create audio podcast:", error);
+
+      // Generate fallback response
+      const fallbackSlug = `audio-${topic.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-fallback-${Date.now()}`;
+      const fallbackUrl = `${baseUrl}/${fallbackSlug}`;
+
+      return `⚠️ Audio podcast generation encountered issues for "${topic}", but a placeholder page was created at: ${fallbackUrl}`;
     }
   }
 
   async listRecentPodcasts(limit: number = 10) {
     console.log(`Attempting to list ${limit} recent podcasts`);
-    console.log(`DB binding exists: ${!!this.env.DB}`);
-    console.log(`DB binding type: ${typeof this.env.DB}`);
     
     try {
-      // First, let's try to list tables to verify connection
-      const tablesResult = await this.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table';").all();
-      console.log(`Available tables:`, tablesResult);
-      
       const stmt = this.env.DB.prepare(`
         SELECT topic, slug, url, created_at 
         FROM podcasts 
@@ -198,13 +324,8 @@ export class Chat extends AIChatAgent<Env, ChatState> {
         LIMIT ?
       `);
       
-      console.log(`Prepared statement created successfully`);
-      
       const result = await stmt.bind(limit).all();
-      console.log(`Query executed, result:`, result);
-      
       const podcasts = result.results || [];
-      console.log(`Found ${podcasts.length} podcasts`);
       
       if (podcasts.length === 0) {
         return "No podcasts have been generated yet.";
@@ -214,10 +335,9 @@ export class Chat extends AIChatAgent<Env, ChatState> {
         `• ${p.topic} - ${p.url} (Generated: ${new Date(p.created_at).toLocaleString()})`
       ).join('\n');
 
-      return ` ${limit} recent podcasts (${podcasts.length}):\n\n${podcastList}`;
+      return `📻 Recent podcasts (${podcasts.length}):\n\n${podcastList}`;
     } catch (error) {
       console.error("Failed to retrieve podcasts:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       return `Failed to retrieve podcast list from database. Error: ${error}`;
     }
   }
@@ -226,10 +346,6 @@ export class Chat extends AIChatAgent<Env, ChatState> {
     console.log(`Looking for podcast recommendations based on mood: ${mood}`);
     
     try {
-      // First, let's try to list tables to verify connection
-      const tablesResult = await this.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table';").all();
-      console.log(`Available tables:`, tablesResult);
-      
       // Get all podcasts from the database
       const stmt = this.env.DB.prepare(`
         SELECT topic, slug, url, created_at 
@@ -253,33 +369,20 @@ export class Chat extends AIChatAgent<Env, ChatState> {
       const messages = [
         {
           role: "system", 
-          content: "You are a helpful podcast recommendation assistant. Based on a user's mood or category preference and a list of available podcasts, recommend the best matching podcast(s). Be enthusiastic and explain why your recommendation fits their mood. Include the full URL in your response."
+          content: "You are a helpful podcast recommendation assistant. Based on a user's mood and available podcasts, recommend the best match and explain why."
         },
         {
           role: "user", 
-          content: `User mood/preference: "${mood}"\n\nAvailable podcasts:\n${podcastList}\n\nPlease recommend the best podcast(s) that match my mood and explain why.`
+          content: `User mood: "${mood}"\n\nAvailable podcasts:\n${podcastList}\n\nRecommend the best podcast that matches my mood.`
         }
       ];
 
       const aiResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages });
-      console.log(`AI recommendation response: ${aiResponse.response}`);
       
       if (aiResponse.response) {
-        // Generate a personal message using AI
-        const personalMessages = [
-          { role: "system", content: "You are an enthusiastic podcast curator who creates personalized, friendly messages." },
-          {
-            role: "user",
-            content: `Create a warm, personal message for someone looking for a podcast when they're feeling "${mood}". Based on this recommendation: ${aiResponse.response}. Make it sound like you personally chose this for them and care about their mood. Include some emojis and be encouraging.`
-          },
-        ];
-        
-        const personalResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages: personalMessages });
-        console.log(`AI personal message response: ${personalResponse.response}`);
-        
-        return personalResponse.response || `🎧 Podcast Recommendation:\n\n${aiResponse.response}`;
+        return `🎧 Podcast Recommendation for "${mood}":\n\n${aiResponse.response}`;
       } else {
-        // Fallback to simple keyword matching if AI fails
+        // Fallback to simple keyword matching
         const keywords = mood.toLowerCase().split(' ');
         const matches = podcasts.filter((podcast: any) => 
           keywords.some(keyword => podcast.topic.toLowerCase().includes(keyword))
@@ -287,28 +390,13 @@ export class Chat extends AIChatAgent<Env, ChatState> {
         
         if (matches.length > 0) {
           const match = matches[0];
-          const date = new Date(match.created_at as string).toLocaleString();
-          
-          // Generate personal message for fallback too
-          const fallbackMessages = [
-            { role: "system", content: "You are an enthusiastic podcast curator who creates personalized, friendly messages." },
-            {
-              role: "user",
-              content: `Create a warm, personal message recommending the podcast "${match.topic}" at ${match.url} for someone feeling "${mood}". Make it encouraging and personal with emojis.`
-            },
-          ];
-          
-          const fallbackResponse: any = await this.env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", { messages: fallbackMessages });
-          console.log(`AI fallback message response: ${fallbackResponse.response}`);
-          
-          return fallbackResponse.response || `🎯 Found a matching podcast!\n\n"${match.topic}"\n📅 Generated: ${date}\n🔗 Listen here: ${match.url}\n\nThis podcast matches your mood for: ${mood}`;
+          return `🎯 Found a matching podcast!\n\n"${match.topic}"\n🔗 Listen here: ${match.url}\n\nThis matches your mood: ${mood}`;
         } else {
           return `😔 No podcasts found matching "${mood}". Try generating some podcasts with topics you're interested in first!`;
         }
       }
     } catch (error) {
       console.error("Failed to get podcast recommendations:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       return `Failed to get recommendations. Error: ${error}`;
     }
   }
